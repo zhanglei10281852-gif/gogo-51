@@ -263,7 +263,11 @@ func parseComparator(token string) ([]Comparator, error) {
 		}
 	}
 	if strings.ContainsAny(token, "xX*") {
-		return expandWildcard(token)
+		bounds, err := expandWildcard(token)
+		if err != nil {
+			return nil, err
+		}
+		return applyOperatorToWildcard(operator, bounds)
 	}
 	version, err := ParseVersion(token)
 	if err != nil {
@@ -315,6 +319,29 @@ func expandWildcard(token string) ([]Comparator, error) {
 		upper = lower.NextMinor()
 	}
 	return []Comparator{{Operator: ">=", Version: lower}, {Operator: "<", Version: upper}}, nil
+}
+
+func applyOperatorToWildcard(operator string, bounds []Comparator) ([]Comparator, error) {
+	switch operator {
+	case "=", "^", "~":
+		return bounds, nil
+	}
+	if len(bounds) < 2 {
+		return nil, fmt.Errorf("operator %q cannot be combined with an unbounded wildcard", operator)
+	}
+	lower, upper := bounds[0].Version, bounds[1].Version
+	switch operator {
+	case ">=":
+		return []Comparator{{Operator: ">=", Version: lower}}, nil
+	case ">":
+		return []Comparator{{Operator: ">=", Version: upper}}, nil
+	case "<":
+		return []Comparator{{Operator: "<", Version: lower}}, nil
+	case "<=":
+		return []Comparator{{Operator: "<", Version: upper}}, nil
+	default:
+		return nil, fmt.Errorf("operator %q cannot be combined with a wildcard version", operator)
+	}
 }
 
 func (r VersionRange) Contains(version Version) bool {
