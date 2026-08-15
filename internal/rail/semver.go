@@ -263,7 +263,7 @@ func parseComparator(token string) ([]Comparator, error) {
 		}
 	}
 	if strings.ContainsAny(token, "xX*") {
-		return expandWildcard(token)
+		return expandWildcard(token, operator)
 	}
 	version, err := ParseVersion(token)
 	if err != nil {
@@ -286,7 +286,7 @@ func parseComparator(token string) ([]Comparator, error) {
 	}
 }
 
-func expandWildcard(token string) ([]Comparator, error) {
+func expandWildcard(token, operator string) ([]Comparator, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) > 3 {
 		return nil, fmt.Errorf("too many wildcard components")
@@ -304,6 +304,8 @@ func expandWildcard(token string) ([]Comparator, error) {
 		}
 		values[index] = value
 	}
+	// A full wildcard (* / x / x.x) denotes every version. Keep matching all
+	// versions regardless of any leading operator, matching prior behavior.
 	if wildcardAt == 0 {
 		return []Comparator{}, nil
 	}
@@ -314,7 +316,26 @@ func expandWildcard(token string) ([]Comparator, error) {
 	} else {
 		upper = lower.NextMinor()
 	}
-	return []Comparator{{Operator: ">=", Version: lower}, {Operator: "<", Version: upper}}, nil
+	// The wildcard spans the half-open interval [lower, upper). Apply a leading
+	// comparison operator to the bound it constrains instead of dropping it.
+	switch operator {
+	case ">=":
+		return []Comparator{{Operator: ">=", Version: lower}}, nil
+	case ">":
+		// Strictly above every version in the interval: at or above the next one.
+		return []Comparator{{Operator: ">=", Version: upper}}, nil
+	case "<=":
+		// At most the top of the interval: below the next version.
+		return []Comparator{{Operator: "<", Version: upper}}, nil
+	case "<":
+		// Strictly below every version in the interval: below the lower bound.
+		return []Comparator{{Operator: "<", Version: lower}}, nil
+	default:
+		// "=", "^", "~" resolve the wildcard to its full interval. "!=" would
+		// need a disjunction to express the complement, which a single
+		// conjunction cannot, so it keeps the historical interval behavior.
+		return []Comparator{{Operator: ">=", Version: lower}, {Operator: "<", Version: upper}}, nil
+	}
 }
 
 func (r VersionRange) Contains(version Version) bool {
